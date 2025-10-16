@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OFP Editor</title>
+    <style>
+      body {
+        margin: 0;
+        background: #333;
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+      }
+      header {
+        position: fixed;
+        top: 0;
+        z-index: 100;
+        width: 100%;
+        background: rgba(51, 51, 51, 0.5);
+      }
+      .header-content {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+        margin-top: 1em;
+        margin-bottom: 0.5em;
+      }
+      h2 {
+        margin-top: 100px;
+      }
+      .page {
+        position: relative;
+        width: 210mm;
+        height: 297mm;
+        margin: 10mm 0;
+        background: white;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+      }
+      .background {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        z-index: 0;
+      }
+      .field {
+        position: absolute;
+        border: 1px dashed rgba(0, 0, 255, 0.4);
+        background: rgba(255, 255, 255, 0.7);
+        font-size: 9pt;
+        z-index: 1;
+      }
+      .savePdf {
+        margin: 3em 1em;
+        padding: 3em 1em;
+      }
+      input {
+        text-align: center;
+      }
+      .apply-range {
+        width: 3em;
+        height: 1.5em;
+      }
+      label {
+        padding-left: 0.5em;
+      }
+      .progress-container {
+        width: 100%;
+        max-width: 600px;
+        margin-top: 1em;
+        display: none; /* 初期状態では非表示 */
+      }
+      .progress-bar {
+        width: 100%;
+        height: 20px;
+        background-color: rgba(255, 255, 255, 0.2);
+        border-radius: 10px;
+        overflow: hidden;
+        position: relative;
+      }
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #4caf50, #45a049);
+        width: 0%;
+        transition: width 0.3s ease;
+        position: relative;
+      }
+      .progress-text {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: white;
+        font-size: 12px;
+        font-weight: bold;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
+      }
+    </style>
+  </head>
+  <header>
+    <div class="header-content">
+      <div id="option" style="color: white">
+        <input type="file" id="pdfFile" accept="application/pdf" />
+        <label for="dpi">解像度: </label>
+        <select id="dpi">
+          <option value="3">低 (1枚 2MB)</option>
+          <option value="5">中 (1枚 6MB)</option>
+          <option value="7">高 (1枚 12MB)</option>
+        </select>
+        <label for="pageRange">ページ: </label>
+        <input
+          id="pageRange"
+          placeholder="all, 1, 1-3, 1,3,5"
+          style="width: 50px"
+        />
+        <button id="applyRange">適用</button>
+        <label for="color">色: </label>
+        <input type="color" id="color" value="#ff0000" />
+        <button id="savePdf">PDFとして保存</button>
+      </div>
+      <div class="progress-container">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+          <div class="progress-text" id="progressText">
+            ページを選択してください
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <body>
+    <h2 style="color: white">OFP Editor</h2>
+    <div id="pages"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+      // PDF.js ワーカー設定（CDN）
+      if (window["pdfjsLib"]) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      }
+    </script>
+    <script>
+      // オプション保存/復元（リロード後も維持）
+      (function persistOptions() {
+        const dpiEl = document.getElementById("dpi");
+        if (dpiEl) {
+          const savedDpi = localStorage.getItem("option:dpi");
+          if (savedDpi) dpiEl.value = savedDpi;
+          dpiEl.addEventListener("change", () => {
+            localStorage.setItem("option:dpi", dpiEl.value);
+          });
+        }
+        const rangeEl = document.getElementById("pageRange");
+        if (rangeEl) {
+          const savedRange = localStorage.getItem("option:pageRange");
+          if (savedRange) rangeEl.value = savedRange;
+          rangeEl.addEventListener("change", () => {
+            localStorage.setItem("option:pageRange", rangeEl.value);
+          });
+        }
+        const colorEl = document.getElementById("color");
+        if (colorEl) {
+          const savedColor = localStorage.getItem("option:color");
+          if (savedColor) colorEl.value = savedColor;
+          colorEl.addEventListener("change", () => {
+            localStorage.setItem("option:color", colorEl.value);
+          });
+        }
+      })();
+
+      function mmFromPx(px, pagePxSize) {
+        // A4固定 210x297mm
+        return (px * 210) / pagePxSize.width;
+      }
+
+      function createInput(pageDiv, mm) {
+        const input = document.createElement("input");
+        input.className = "field";
+        input.style.top = `${mm.y}mm`;
+        input.style.left = `${mm.x}mm`;
+        input.style.width = `${mm.width + 10}mm`;
+        input.style.height = `${Math.max(3, mm.height)}mm`;
+        input.dataset.mmX = String(mm.x);
+        input.dataset.mmY = String(mm.y);
+        input.dataset.mmWidth = String(mm.width);
+        input.dataset.mmHeight = String(mm.height);
+        // Enterで次へ
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const allFields = Array.from(document.querySelectorAll(".field"));
+            const idx = allFields.indexOf(input);
+            const next = allFields[(idx + 1) % allFields.length];
+            next && next.focus();
+          }
+        });
+        pageDiv.appendChild(input);
+      }
+
+      async function detectDottedFields(page, viewport, pageDiv) {
+        const text = await page.getTextContent();
+        const pagePxSize = { width: viewport.width, height: viewport.height };
+
+        // 文字列アイテム毎に「...」などの連続ドットを検出
+        for (const item of text.items) {
+          const str = item.str || "";
+          const m = /\.{3,}/.exec(str);
+          if (!m) continue;
+
+          // transform を viewport に適用して左下の座標とフォントサイズ等から概算 bbox
+          const tm = item.transform; // [a,b,c,d,e,f]
+          const vt = viewport.transform; // 変換行列
+          const x = tm[4] * vt[0] + tm[5] * vt[2] + vt[4];
+          const y = tm[4] * vt[1] + tm[5] * vt[3] + vt[5] - 18;
+          const fontHeightPx = Math.hypot(
+            tm[2] * vt[0] + tm[3] * vt[2],
+            tm[2] * vt[1] + tm[3] * vt[3]
+          );
+
+          // 一文字幅を幅/文字数で近似
+          const totalPxWidth = item.width * viewport.scale;
+          const charW = totalPxWidth / Math.max(1, str.length);
+          const dotStart = m.index;
+          const dotEnd = m.index + m[0].length;
+          const dotX0px = x + charW * dotStart - 2; // 微調整
+          const dotX1px = x + charW * dotEnd;
+          const widthPx = Math.max(1, dotX1px - dotX0px - 61);
+          const heightPx = Math.max(1, fontHeightPx - 35);
+
+          // px -> mm（A4幅基準で換算）
+          const mmX = (dotX0px / pagePxSize.width) * 210;
+          const mmY = (y / pagePxSize.height) * 297;
+          const mmW = (widthPx / pagePxSize.width) * 210;
+          const mmH = (heightPx / pagePxSize.height) * 297;
+
+          createInput(pageDiv, {
+            x: Number(mmX.toFixed(2)),
+            y: Number(mmY.toFixed(2)),
+            width: Number(mmW.toFixed(2)),
+            height: Number(mmH.toFixed(2)),
+          });
+        }
+      }
+
+      function parsePageRange(input, totalPages) {
+        if (!input || input.trim().toLowerCase() === "all") {
+          return Array.from({ length: totalPages }, (_, i) => i + 1);
+        }
+        const pages = new Set();
+        const parts = input.split(",");
+        for (const raw of parts) {
+          const part = raw.trim();
+          if (!part) continue;
+          if (part.includes("-")) {
+            const [s, e] = part.split("-").map((v) => parseInt(v.trim(), 10));
+            if (!isNaN(s) && !isNaN(e)) {
+              const start = Math.max(1, Math.min(s, e));
+              const end = Math.min(totalPages, Math.max(s, e));
+              for (let p = start; p <= end; p++) pages.add(p);
+            }
+          } else {
+            const n = parseInt(part, 10);
+            if (!isNaN(n) && n >= 1 && n <= totalPages) pages.add(n);
+          }
+        }
+        return Array.from(pages).sort((a, b) => a - b);
+      }
+
+      let currentPdfData = null; // Uint8Arrayで保持
+      let currentFileName = null;
+      let totalPages = 0;
+      let currentPageNum = 0;
+
+      // プログレスバー表示/非表示関数
+      function showProgressBar() {
+        const progressContainer = document.querySelector(".progress-container");
+        if (progressContainer) {
+          progressContainer.style.display = "block";
+        }
+      }
+
+      function hideProgressBar() {
+        const progressContainer = document.querySelector(".progress-container");
+        if (progressContainer) {
+          progressContainer.style.display = "none";
+        }
+      }
+
+      // プログレスバー更新関数
+      function updateProgressBar(currentPage, total, message = null) {
+        const progressFill = document.getElementById("progressFill");
+        const progressText = document.getElementById("progressText");
+
+        if (total === 0) {
+          progressFill.style.width = "0%";
+          progressText.textContent = message || "ページを選択してください";
+          return;
+        }
+
+        const percentage = Math.round((currentPage / total) * 100);
+        progressFill.style.width = `${percentage}%`;
+        progressText.textContent =
+          message || `${currentPage} / ${total} (${percentage}%)`;
+      }
+
+      async function renderPdf(arrayBufferOrTyped, fileName) {
+        const container = document.getElementById("pages");
+        container.innerHTML = "";
+
+        // 毎回コピーを渡してdetachを回避
+        const dataForPdfjs =
+          arrayBufferOrTyped instanceof Uint8Array
+            ? arrayBufferOrTyped.slice(0)
+            : new Uint8Array(arrayBufferOrTyped);
+        const pdf = await pdfjsLib.getDocument({ data: dataForPdfjs }).promise;
+        const numPages = pdf.numPages;
+        totalPages = numPages;
+        const rangeInput =
+          (document.getElementById("pageRange") || {}).value || "all";
+        const targetPages = parsePageRange(rangeInput, numPages);
+
+        // プログレスバーを表示
+        showProgressBar();
+        updateProgressBar(0, targetPages.length, "PDFを読み込み中...");
+
+        // プログレスバーの表示を確実にするための短い遅延
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        for (let i = 0; i < targetPages.length; i++) {
+          const pageNum = targetPages[i];
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 2 }); // 高解像度で描画
+
+          // プログレスバーを更新
+          updateProgressBar(
+            i + 1,
+            targetPages.length,
+            `ページ ${pageNum} をレンダリング中... (${i + 1}/${
+              targetPages.length
+            })`
+          );
+
+          // プログレスバーの更新を確実に表示するための短い遅延
+          await new Promise((resolve) => setTimeout(resolve, 1));
+
+          const pageDiv = document.createElement("div");
+          pageDiv.className = "page";
+          pageDiv.id = `page${pageNum}`;
+
+          // 背景キャンバス
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.className = "background";
+
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          // CSSサイズはA4の比率で contain
+          pageDiv.appendChild(canvas);
+          container.appendChild(pageDiv);
+
+          // ドット行からフィールド自動検出
+          await detectDottedFields(page, viewport, pageDiv);
+        }
+
+        // レンダリング完了のプログレスバー更新
+        updateProgressBar(
+          targetPages.length,
+          targetPages.length,
+          "レンダリング完了！"
+        );
+
+        // プログレスバーを非表示
+        setTimeout(() => {
+          hideProgressBar();
+        }, 1000);
+
+        // 最初のフィールドにフォーカス
+        setTimeout(() => {
+          const firstField = document.querySelector(".field");
+          if (firstField) firstField.focus();
+        }, 100);
+
+        // ファイル名を保持
+        container.dataset.uploadFileName = fileName || "document.pdf";
+        currentPdfData =
+          arrayBufferOrTyped instanceof Uint8Array
+            ? arrayBufferOrTyped
+            : new Uint8Array(arrayBufferOrTyped);
+        currentFileName = fileName;
+      }
+
+      // ファイル選択
+      document
+        .getElementById("pdfFile")
+        .addEventListener("change", async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          const buf = await file.arrayBuffer();
+          const typed = new Uint8Array(buf);
+          await renderPdf(typed, file.name);
+        });
+      document
+        .getElementById("applyRange")
+        .addEventListener("click", async () => {
+          if (!currentPdfData) return;
+          await renderPdf(currentPdfData, currentFileName || "document.pdf");
+        });
+
+      // PDF保存ボタン
+      document.getElementById("savePdf").onclick = async () => {
+        try {
+          const dpi = Number(document.getElementById("dpi").value || 3);
+          const color = document.getElementById("color").value || "#ff0000";
+
+          const pages = document.querySelectorAll(".page");
+          if (!pages.length) {
+            console.warn("ページがありません。先にPDFを読み込んでください。");
+            alert("先にPDFを読み込んでください");
+            return;
+          }
+
+          // プログレスバーを表示
+          showProgressBar();
+          updateProgressBar(0, pages.length, "PDF保存を開始しています...");
+
+          // プログレスバーの表示を確実にするための短い遅延
+          await new Promise((resolve) => setTimeout(resolve, 5));
+
+          const pdf = new jspdf.jsPDF("p", "mm", "a4");
+
+          for (let i = 0; i < pages.length; i++) {
+            const pageId = pages[i].id || "";
+            const pageNum = Number(pageId.replace("page", ""));
+            console.log(`render page ${pageNum}`);
+
+            // プログレスバーを更新
+            updateProgressBar(
+              i + 1,
+              pages.length,
+              `ページ ${pageNum} を処理中... (${i + 1}/${pages.length})`
+            );
+
+            // プログレスバーの更新を確実に表示するための短い遅延
+            await new Promise((resolve) => setTimeout(resolve, 1));
+
+            // 背景画像を追加
+            const bgCanvas = pages[i].querySelector(".background");
+            if (!bgCanvas) continue;
+            if (i > 0) pdf.addPage();
+
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            canvas.width = 210 * dpi;
+            canvas.height = 297 * dpi;
+            ctx.drawImage(bgCanvas, 0, 0, canvas.width, canvas.height);
+
+            const bgData = canvas.toDataURL("image/png");
+            pdf.addImage(bgData, "PNG", 0, 0, 210, 297);
+
+            // メモリ解放
+            canvas.width = 0;
+            canvas.height = 0;
+
+            // テキストを直接PDFに描画（入力群の mm 座標を使用）
+            const inputs = pages[i].querySelectorAll(".field");
+
+            pdf.setFontSize(12);
+            pdf.setFont("times", "bolditalic");
+            pdf.setTextColor(color);
+
+            inputs.forEach((input) => {
+              if (!input.value) return;
+              const x = parseFloat(input.dataset.mmX || "0");
+              const y = parseFloat(input.dataset.mmY || "0");
+              const w = parseFloat(input.dataset.mmWidth || "0");
+              const centerX = x + (w + 10) / 2 + 1;
+              const textY = y + 2.7;
+              pdf.text(input.value, centerX, textY, { align: "center" });
+            });
+          }
+
+          // ファイル名を生成（pdf_name_8 + 日付）
+          const uploadName =
+            document.getElementById("pages").dataset.uploadFileName ||
+            "document.pdf";
+          const pdfName8 =
+            uploadName.replace(/\.pdf$/i, "").slice(0, 8) || "document";
+          const today = new Date();
+          const dateStr =
+            today.getFullYear().toString() +
+            (today.getMonth() + 1).toString().padStart(2, "0") +
+            today.getDate().toString().padStart(2, "0");
+          const fileName = `${pdfName8}_${dateStr}.pdf`;
+
+          // 保存（Blob生成を厳密に。失敗時はArrayBuffer→Blob）
+          let blob;
+          try {
+            blob = pdf.output("blob");
+          } catch (_) {
+            blob = null;
+          }
+          if (!(blob instanceof Blob)) {
+            const ab = pdf.output("arraybuffer");
+            blob = new Blob([ab], { type: "application/pdf" });
+          }
+
+          // 保存完了のプログレスバー更新
+          updateProgressBar(
+            pages.length,
+            pages.length,
+            "PDF保存を完了しています..."
+          );
+
+          try {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+
+            // 保存完了後、プログレスバーを非表示
+            setTimeout(() => {
+              hideProgressBar();
+            }, 1000);
+          } catch (e) {
+            console.warn(
+              "createObjectURLに失敗したためpdf.saveでフォールバック",
+              e
+            );
+            pdf.save(fileName);
+
+            // 保存完了後、プログレスバーを非表示
+            setTimeout(() => {
+              hideProgressBar();
+            }, 1000);
+          }
+        } catch (err) {
+          console.error("PDF保存に失敗:", err);
+          alert(
+            `PDFの保存に失敗しました: ${err && err.message ? err.message : err}`
+          );
+          // エラー時もプログレスバーを非表示
+          hideProgressBar();
+        }
+      };
+    </script>
+  </body>
+</html>
