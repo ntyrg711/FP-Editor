@@ -99,6 +99,15 @@
         font-weight: bold;
         text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
       }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        background-color: #ccc !important;
+      }
+      #savePdf:disabled {
+        background-color: #666 !important;
+        color: #999 !important;
+      }
     </style>
   </head>
   <header>
@@ -416,7 +425,13 @@
 
       // PDF保存ボタン
       document.getElementById("savePdf").onclick = async () => {
+        const saveButton = document.getElementById("savePdf");
+
         try {
+          // ボタンを無効化して重複実行を防ぐ
+          saveButton.disabled = true;
+          saveButton.textContent = "処理中...";
+
           const dpi = Number(document.getElementById("dpi").value || 3);
           const color = document.getElementById("color").value || "#ff0000";
 
@@ -424,6 +439,9 @@
           if (!pages.length) {
             console.warn("ページがありません。先にPDFを読み込んでください。");
             alert("先にPDFを読み込んでください");
+            // ボタンを有効化
+            saveButton.disabled = false;
+            saveButton.textContent = "PDFとして保存";
             return;
           }
 
@@ -545,6 +563,10 @@
               hideProgressBar();
             }, 1000);
           }
+
+          // ボタンを有効化
+          saveButton.disabled = false;
+          saveButton.textContent = "PDFとして保存";
         } catch (err) {
           console.error("PDF保存に失敗:", err);
           alert(
@@ -552,6 +574,10 @@
           );
           // エラー時もプログレスバーを非表示
           hideProgressBar();
+
+          // エラー時もボタンを有効化
+          saveButton.disabled = false;
+          saveButton.textContent = "PDFとして保存";
         }
       };
     </script>
