@@ -72,7 +72,7 @@
         width: 100%;
         max-width: 600px;
         margin-top: 1em;
-        display: none; /* 初期状態では非表示 */
+        display: none;
       }
       .progress-bar {
         width: 100%;
@@ -185,7 +185,6 @@
       })();
 
       function mmFromPx(px, pagePxSize) {
-        // A4固定 210x297mm
         return (px * 210) / pagePxSize.width;
       }
 
@@ -194,7 +193,7 @@
         input.className = "field";
         input.style.top = `${mm.y}mm`;
         input.style.left = `${mm.x}mm`;
-        input.style.width = `${mm.width + 10}mm`;
+        input.style.width = `${mm.width}mm`;
         input.style.height = `${Math.max(3, mm.height)}mm`;
         input.dataset.mmX = String(mm.x);
         input.dataset.mmY = String(mm.y);
@@ -224,8 +223,8 @@
           if (!m) continue;
 
           // transform を viewport に適用して左下の座標とフォントサイズ等から概算 bbox
-          const tm = item.transform; // [a,b,c,d,e,f]
-          const vt = viewport.transform; // 変換行列
+          const tm = item.transform;
+          const vt = viewport.transform;
           const x = tm[4] * vt[0] + tm[5] * vt[2] + vt[4];
           const y = tm[4] * vt[1] + tm[5] * vt[3] + vt[5] - 18;
           const fontHeightPx = Math.hypot(
@@ -238,9 +237,9 @@
           const charW = totalPxWidth / Math.max(1, str.length);
           const dotStart = m.index;
           const dotEnd = m.index + m[0].length;
-          const dotX0px = x + charW * dotStart - 2; // 微調整
-          const dotX1px = x + charW * dotEnd;
-          const widthPx = Math.max(1, dotX1px - dotX0px - 61);
+          const dotX0px = x + charW * dotStart;
+          const dotX1px = x + charW * dotEnd - 8;
+          const widthPx = Math.max(1, dotX1px - dotX0px);
           const heightPx = Math.max(1, fontHeightPx - 35);
 
           // px -> mm（A4幅基準で換算）
@@ -282,7 +281,7 @@
         return Array.from(pages).sort((a, b) => a - b);
       }
 
-      let currentPdfData = null; // Uint8Arrayで保持
+      let currentPdfData = null;
       let currentFileName = null;
       let totalPages = 0;
       let currentPageNum = 0;
@@ -344,7 +343,7 @@
         for (let i = 0; i < targetPages.length; i++) {
           const pageNum = targetPages[i];
           const page = await pdf.getPage(pageNum);
-          const viewport = page.getViewport({ scale: 2 }); // 高解像度で描画
+          const viewport = page.getViewport({ scale: 2 });
 
           // プログレスバーを更新
           updateProgressBar(
